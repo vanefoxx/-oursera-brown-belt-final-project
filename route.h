@@ -58,6 +58,15 @@ Stop ReadStop(const std::map<std::string, Json::Node>& json_stop) {
 	return stop;
 }
 
+int ComputeRouteDistance(const Stop& first, const Stop& second) {
+	const auto& stops_distance_first = first.other_stops_distance;
+	const auto& stops_distance_second = second.other_stops_distance;
+
+	return stops_distance_first.find(second.name) == stops_distance_first.end()
+		? stops_distance_second.at(first.name)
+		: stops_distance_first.at(second.name);
+}
+
 class Route {
 public:
 	using Stops = std::vector<const Stop*>;
@@ -86,16 +95,8 @@ protected:
 		return angle * EARTH_RADIUS;
 	}
 
-	static int ComputeRouteDistance(const Stop& first, const Stop& second) {
-		const auto& stops_distance_first = first.other_stops_distance;
-		const auto& stops_distance_second = second.other_stops_distance;
-
-		return stops_distance_first.find(second.name) == stops_distance_first.end()
-			? stops_distance_second.at(first.name)
-			: stops_distance_first.at(second.name);
-	}
-
 public:
+	
 	Route(Stops& stops) : stops_(std::move(stops)) {
 		for (auto stop : stops_) {
 			unique_stops_.insert(stop->name);
