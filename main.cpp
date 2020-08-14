@@ -54,11 +54,22 @@ private:
 	ostream& out_;
 };
 
+class ReadStopQuery : public Query {
+public:
+	ReadStopQuery(RouteManager& rm_ref, const string& name, ostream& out) : Query(rm_ref, name), out_(out) {}
+
+	void Run() override {
+		rm_ref_.ViewStopBuses(out_, name_);
+	}
+private:
+	ostream& out_;
+};
+
 class UpdateQuery : public Query {
 public:
 	UpdateQuery(RouteManager& rm_ref) : Query(rm_ref) {}
 
-	void Run() override{
+	void Run() override {
 		rm_ref_.UpdateDb();
 	}
 };
@@ -110,6 +121,8 @@ vector<unique_ptr<Query>> ReadQueries(istream& in, ostream& out, RouteManager& r
 
 		if (query == "Bus") {
 			result.push_back(make_unique<ReadRouteQuery>(rm, name, out));
+		} else if (query == "Stop") {
+			result.push_back(make_unique<ReadStopQuery>(rm, name, out));
 		}
 	}
 
@@ -126,7 +139,7 @@ void Run(istream& in, ostream& out) {
 
 
 int main() {
-	
+
 	Run(cin, cout);
 
 	system("pause");

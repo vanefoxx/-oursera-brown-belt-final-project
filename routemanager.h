@@ -44,6 +44,7 @@ class RouteManager {
 private:
 	std::unordered_map<std::string, Stop> stops_list_;
 	std::unordered_map<std::string, std::unique_ptr<AnnularRoute>> bus_list_;
+	std::unordered_map<std::string, std::set<std::string>> stop_bus_;
 public:
 	void InsertStop(Stop stop) {
 		stops_list_[stop.name] = stop;
@@ -59,6 +60,7 @@ public:
 				stop.name = stop_name;
 			}
 
+			stop_bus_[stop_name].insert(route_name);
 			stops.push_back(&stops_list_[stop_name]);
 		}
 
@@ -86,5 +88,28 @@ public:
 				                             << (it->second)->CountOfUniqueStops() << " unique stops, "
 				                             << (it->second)->GetLenght() << " route length\n";
 		}
+	}
+
+	void ViewStopBuses(std::ostream& out, const std::string& stop_name) const {
+		auto stop = stops_list_.find(stop_name);
+		auto have_bus = stop_bus_.find(stop_name);
+		out << "Stop " << stop_name << ": ";
+		if (stop != stops_list_.end() && have_bus != stop_bus_.end()) {
+			bool first = true;
+			out << "buses ";
+			for (const auto& bus : stop_bus_.at(stop_name)) {
+				if (first) {
+					first = !first;
+				} else {
+					out << " ";
+				}
+				out << bus;
+			}
+		} else if (stop == stops_list_.end()) {
+			out << "not found";
+		} else {
+			out << "no buses";
+		}
+		out << "\n";
 	}
 };
