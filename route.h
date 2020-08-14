@@ -5,21 +5,69 @@
 #include <vector>
 #include <set>
 #include <cmath>
+#include <unordered_map>
+#include <iostream>
+#include <sstream>
+#include <cstdint>
+
 
 struct Stop {
 	std::string name;
 	double latitude;
 	double longitude;
+
+	using StopsDistance = std::unordered_map<std::string, int>;
+	StopsDistance other_stops_distance;
 };
 
-using Stops = std::vector<const Stop*>;
+template<typename T>
+T ConvertInNumber(const std::string& str) {
+	std::istringstream to_double(str);
+	T result;
+	to_double >> result;
+	return result;
+}
+
+std::string Split(std::string_view& sv, const std::string& symbols) {
+	size_t pos = sv.find(symbols);
+	std::string result(sv.substr(0, pos));
+	if (pos != sv.npos) {
+		sv.remove_prefix(pos + symbols.size());
+	}
+	else {
+		sv.remove_prefix(sv.size());
+	}
+	return result;
+}
+
+Stop ReadStop(std::string_view in, const std::string& stop_name) {
+	Stop stop;
+
+	stop.name = stop_name;
+	stop.latitude = ConvertInNumber<double>(Split(in, ", "));
+	stop.longitude = ConvertInNumber<double>(Split(in, ", "));
+
+	while (!in.empty()) {
+		
+		int distance = ConvertInNumber<int>(Split(in, "m to "));
+		
+		std::string name = Split(in, ", ");
+
+		stop.other_stops_distance[name] = distance;
+	}
+	
+	return stop;
+}
 
 class AnnularRoute {
+public:
+	using Stops = std::vector<const Stop*>;
 protected:
 
 	Stops stops_;
 	std::set<std::string_view> unique_stops_;
-	double route_lenght_;
+	int route_lenght_ = 0;
+	double curvature_ = 0;
 
 	static std::pair<double, double> ConvertCoordToRadian(const Stop& stop) {
 		static const double PI = 3.1415926535;
@@ -27,7 +75,7 @@ protected:
 		return { stop.latitude * PI / 180.0, stop.longitude * PI / 180.0 };
 	}
 
-	static double ComputeDistance(const Stop& first, const Stop& second) {
+	static double ComputeGeoDistance(const Stop& first, const Stop& second) {
 		static const uint32_t EARTH_RADIUS = 6'371'000;
 
 		auto first_in_rad = ConvertCoordToRadian(first);
@@ -39,6 +87,15 @@ protected:
 		return angle * EARTH_RADIUS;
 	}
 
+	static int ComputeRouteDistance(const Stop& first, const Stop& second) {
+		const auto& stops_distance_first = first.other_stops_distance;
+		const auto& stops_distance_second = second.other_stops_distance;
+		
+		return stops_distance_first.find(second.name) == stops_distance_first.end() 
+			? stops_distance_second.at(first.name) 
+			: stops_distance_first.at(second.name);
+	}
+
 public:
 	AnnularRoute(Stops& stops) : stops_(std::move(stops)) {
 		for (auto stop : stops_) {
@@ -46,16 +103,19 @@ public:
 		}
 	}
 
-	void ComputeLenght() {
-		double result = 0;
+	void ComputeLenghtAndCurvature() {	
+		double route_geolenght = 0;
+
 		for (size_t i = 0; i < stops_.size() - 1; ++i) {
-			result += ComputeDistance(*stops_[i], *stops_[i + 1]);
+			route_lenght_ += ComputeRouteDistance(*stops_[i], *stops_[i + 1]);
+
+			route_geolenght += ComputeGeoDistance(*stops_[i], *stops_[i + 1]);
 		}
 
-		route_lenght_ = result;
+		curvature_ = route_lenght_ / route_geolenght;
 	}
 
-	virtual size_t CountOfStops() const{
+	size_t CountOfStops() const {
 		return stops_.size();
 	}
 
@@ -63,8 +123,12 @@ public:
 		return unique_stops_.size();
 	}
 
-	virtual double GetLenght() const {
+	int GetLenght() const {
 		return route_lenght_;
+	}
+
+	double GetCurvature() const {
+		return curvature_;
 	}
 
 	virtual ~AnnularRoute() {}
@@ -73,12 +137,4 @@ public:
 class PendulumRoute : public AnnularRoute {
 public:
 	PendulumRoute(Stops& stops) : AnnularRoute(stops) {}
-
-	size_t CountOfStops() const override{
-		return 2 * stops_.size() - 1;
-	}
-
-	double GetLenght() const override {
-		return 2 * route_lenght_;
-	}
 };

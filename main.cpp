@@ -10,59 +10,56 @@ using namespace std;
 
 class Query {
 public:
-	Query(RouteManager& rm_ref, const string& name = "") : rm_ref_(rm_ref), name_(name) {}
-	
+	Query(RouteManager& rm_ref, const string& name = "", ostream& out = cout) : rm_ref_(rm_ref), name_(name), out_(out) {}
+
 	virtual void Run() = 0;
 protected:
-	RouteManager& rm_ref_;
 
+	RouteManager& rm_ref_;
 	string name_;
+	ostream& out_;
 };
 
 class InsertStopQuery : public Query {
 public:
-	InsertStopQuery(RouteManager& rm_ref, const string& name, double latitude, double longitude) : Query(rm_ref, name),
-																			 latitude_(latitude), longitude_(longitude) {}
+	InsertStopQuery(RouteManager& rm_ref, Stop stop) : Query(rm_ref),
+		stop_(move(stop)) {}
+
 	void Run() override {
-		rm_ref_.InsertStop(Stop{ name_, latitude_, longitude_ });
+		rm_ref_.InsertStop(stop_);
 	}
 private:
-	double latitude_;
-	double longitude_;
+	Stop stop_;
 };
 
-class InsertRouteQuery : public Query {
+class InsertBusQuery : public Query {
 public:
-	InsertRouteQuery(RouteManager& rm_ref, const string& name, TypeOfRoute type, vector<string>& names) : Query(rm_ref, name),
-		type_of_route(type), names_of_stops(move(names)) {}
+	InsertBusQuery(RouteManager& rm_ref, Bus bus) : Query(rm_ref),
+		bus_(move(bus)) {}
+
 	void Run() override {
-		rm_ref_.InsertRoute(name_, type_of_route, names_of_stops);
+		rm_ref_.InsertBus(bus_);
 	}
 private:
-	TypeOfRoute type_of_route;
-	vector<string> names_of_stops;
+	Bus bus_;
 };
 
-class ReadRouteQuery : public Query {
+class BusInfoQuery : public Query {
 public:
-	ReadRouteQuery(RouteManager& rm_ref, const string& name, ostream& out) : Query(rm_ref, name), out_(out) {}
+	BusInfoQuery(RouteManager& rm_ref, const string& name, ostream& out = cout) : Query(rm_ref, name, out) {}
 
 	void Run() override {
 		rm_ref_.Bus(out_, name_);
 	}
-private:
-	ostream& out_;
 };
 
-class ReadStopQuery : public Query {
+class StopInfoQuery : public Query {
 public:
-	ReadStopQuery(RouteManager& rm_ref, const string& name, ostream& out) : Query(rm_ref, name), out_(out) {}
+	StopInfoQuery(RouteManager& rm_ref, const string& name, ostream& out = cout) : Query(rm_ref, name, out) {}
 
 	void Run() override {
 		rm_ref_.ViewStopBuses(out_, name_);
 	}
-private:
-	ostream& out_;
 };
 
 class UpdateQuery : public Query {
@@ -75,54 +72,47 @@ public:
 };
 
 vector<unique_ptr<Query>> ReadQueries(istream& in, ostream& out, RouteManager& rm) {
-	size_t count_of_update_queries = 0;
-	in >> count_of_update_queries;
 
+	string queries;
+	
+	getline(in, queries, 'é');
+
+	string_view sv(queries);
+	
+	size_t count_of_update_queries = ConvertInNumber<size_t>(Split(sv, "\n"));
+	
 	vector <unique_ptr<Query>> result;
 	result.reserve(count_of_update_queries);
 
 	for (size_t i = 0; i < count_of_update_queries; ++i) {
-		string query;
-		in >> query;
-		in.ignore(1);
-
-		string name;
-		getline(in, name, ':');
-		in.ignore(1);
-
+		string query = Split(sv, " ");
+		
+		string name = Split(sv, ": ");
+		
 		if (query == "Stop") {
-			double latitude, longitude;
-			in >> latitude;
-			in.ignore(2);
-			in >> longitude;
-
-			result.push_back(make_unique<InsertStopQuery>(rm, name, latitude, longitude ));
+			result.push_back(make_unique<InsertStopQuery>(rm, ReadStop(Split(sv, "\n"), name)));
 		}
 		else if (query == "Bus") {
-			auto[type, names] = ReadStops(in);
-			result.push_back(make_unique<InsertRouteQuery>(rm, name, type, names));
+			result.push_back(make_unique<InsertBusQuery>(rm, ReadBus(Split(sv, "\n"), name)));
 		}
 	}
-
+	
 	result.push_back(make_unique<UpdateQuery>(rm));
 
-	size_t count_of_read_queries;
-	in >> count_of_read_queries;
-
+	size_t count_of_read_queries = ConvertInNumber<size_t>(Split(sv, "\n"));
+	
 	result.reserve(count_of_update_queries + count_of_read_queries);
-
+	
 	for (size_t i = 0; i < count_of_read_queries; ++i) {
-		string query;
-		in >> query;
-		in.ignore(1);
-
-		string name;
-		getline(in, name);
+		string query = Split(sv, " ");
+		
+		string name = Split(sv, "\n");
 
 		if (query == "Bus") {
-			result.push_back(make_unique<ReadRouteQuery>(rm, name, out));
-		} else if (query == "Stop") {
-			result.push_back(make_unique<ReadStopQuery>(rm, name, out));
+			result.push_back(make_unique<BusInfoQuery>(rm, name, out));
+		}
+		else if (query == "Stop") {
+			result.push_back(make_unique<StopInfoQuery>(rm, name, out));
 		}
 	}
 
@@ -137,11 +127,9 @@ void Run(istream& in, ostream& out) {
 	}
 }
 
-
 int main() {
-
+	
 	Run(cin, cout);
 
-	system("pause");
 	return 0;
 }

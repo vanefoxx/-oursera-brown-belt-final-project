@@ -5,76 +5,98 @@
 #include <unordered_map>
 #include <memory>
 #include <iostream>
+#include <map>
+#include <algorithm>
+#include <iterator>
+
 
 enum class TypeOfRoute {
 	ANNULAR_ROUTE,
 	PENDULUM_ROUTE
 };
 
-std::pair<TypeOfRoute, std::vector<std::string>> ReadStops(std::istream& in) {
-	std::string s;
+const std::map<TypeOfRoute, std::string> TYPE_SYMBOL = { {TypeOfRoute::ANNULAR_ROUTE, " > "}, 
+														 {TypeOfRoute::PENDULUM_ROUTE, " - "} };
 
-	std::getline(in, s);
-
+TypeOfRoute DeterminateRouteType(std::string_view stop_list) {
 	char symbol;
-	TypeOfRoute type;
-
-	if (size_t pos = s.find('-'); pos != s.npos) {
-		type = TypeOfRoute::PENDULUM_ROUTE;
-		symbol = '-';
-	} else if (size_t pos = s.find('>'); pos != s.npos) {
-		type = TypeOfRoute::ANNULAR_ROUTE;
-		symbol = '>';
+	for (size_t i = 0; i < stop_list.size(); ++i) {
+		symbol = stop_list[i];
+		if (symbol == '>' || symbol == '-') {
+			break;
+		}
 	}
+	if (symbol == '>') {
+		return TypeOfRoute::ANNULAR_ROUTE;
+	} else if (symbol == '-') {
+		return TypeOfRoute::PENDULUM_ROUTE;
+	}
+}
+
+struct Bus {
+	std::string name;
+
+	TypeOfRoute type;
+	std::vector<std::string> stops_list;
+	std::unique_ptr<AnnularRoute> route = nullptr;
+};
+
+Bus ReadBus(std::string_view in, const std::string& name) {
+	
+	TypeOfRoute type = DeterminateRouteType(in);
 
 	std::vector<std::string> result;
 
-	std::string_view s_v(s);
-
-	for (size_t pos; !s_v.empty(); ) {
-		pos = s_v.find(symbol);
-		result.push_back(std::string(s_v.substr(0, pos != s_v.npos ? pos - 1 : s_v.npos)));
-		s_v.remove_prefix(pos != s.npos ? pos + 2 : s_v.size());
+	while (!in.empty()) {
+		result.push_back(Split(in, TYPE_SYMBOL.at(type)));
 	}
 
-	return { type, std::move(result) };
+	if (type == TypeOfRoute::PENDULUM_ROUTE) {
+		std::vector<std::string> temp;
+		std::reverse_copy(result.begin(), result.end() - 1, back_inserter(temp));
+		result.insert(result.end(), make_move_iterator(temp.begin()), make_move_iterator(temp.end()));
+	}
+	
+	return { name, type, std::move(result) };
 }
 
 class RouteManager {
 private:
 	std::unordered_map<std::string, Stop> stops_list_;
-	std::unordered_map<std::string, std::unique_ptr<AnnularRoute>> bus_list_;
+	std::unordered_map<std::string, Bus> bus_list_;
 	std::unordered_map<std::string, std::set<std::string>> stop_bus_;
 public:
-	void InsertStop(Stop stop) {
-		stops_list_[stop.name] = stop;
+	void InsertStop(Stop& stop) {
+		stops_list_[stop.name] = std::move(stop);
 	}
 
-	void InsertRoute(const std::string& route_name, TypeOfRoute type, const std::vector<std::string>& names_of_stops) {
-		Stops stops;
-		stops.reserve(names_of_stops.size());
+	void InsertBus(Bus& bus) {
+		AnnularRoute::Stops stops;
+		stops.reserve(bus.stops_list.size());
 
-		for (const auto& stop_name : names_of_stops) {
+		for (const auto& stop_name : bus.stops_list) {
 			Stop& stop = stops_list_[stop_name];
 			if (stop.name.empty()) {
 				stop.name = stop_name;
 			}
 
-			stop_bus_[stop_name].insert(route_name);
+			stop_bus_[stop_name].insert(bus.name);
 			stops.push_back(&stops_list_[stop_name]);
 		}
 
-		if (type == TypeOfRoute::ANNULAR_ROUTE) {
-			bus_list_[route_name] = std::make_unique<AnnularRoute>(stops);
+		if (bus.type == TypeOfRoute::ANNULAR_ROUTE) {
+			bus.route = std::move(std::make_unique<AnnularRoute>(stops));
+			bus_list_[bus.name] = std::move(bus);
 		}
-		else if (type == TypeOfRoute::PENDULUM_ROUTE) {
-			bus_list_[route_name] = std::make_unique<PendulumRoute>(stops);
+		else if (bus.type == TypeOfRoute::PENDULUM_ROUTE) {
+			bus.route = std::move(std::make_unique<PendulumRoute>(stops));
+			bus_list_[bus.name] = std::move(bus);
 		}
 	}
 
 	void UpdateDb() {
-		for (auto& [name, route] : bus_list_) {
-			route->ComputeLenght();
+		for (auto&[name, bus] : bus_list_) {
+			bus.route->ComputeLenghtAndCurvature();
 		}
 	}
 
@@ -82,11 +104,14 @@ public:
 		auto it = bus_list_.find(bus_name);
 		if (it == bus_list_.end()) {
 			out << "Bus " << bus_name << ": not found" << '\n';
-		} else {
+		}
+		else {
 			out.precision(6);
-			out << "Bus " << bus_name << ": " << (it->second)->CountOfStops() << " stops on route, "
-				                             << (it->second)->CountOfUniqueStops() << " unique stops, "
-				                             << (it->second)->GetLenght() << " route length\n";
+			const auto& bus = it->second;
+			out << "Bus " << bus.name << ": " << bus.route->CountOfStops() << " stops on route, "
+				<< bus.route->CountOfUniqueStops() << " unique stops, "
+				<< bus.route->GetLenght() << " route length, "
+			    << bus.route->GetCurvature() << " curvature\n";
 		}
 	}
 
@@ -100,14 +125,17 @@ public:
 			for (const auto& bus : stop_bus_.at(stop_name)) {
 				if (first) {
 					first = !first;
-				} else {
+				}
+				else {
 					out << " ";
 				}
 				out << bus;
 			}
-		} else if (stop == stops_list_.end()) {
+		}
+		else if (stop == stops_list_.end()) {
 			out << "not found";
-		} else {
+		}
+		else {
 			out << "no buses";
 		}
 		out << "\n";
