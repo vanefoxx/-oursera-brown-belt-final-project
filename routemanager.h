@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Route.h"
+#include "route.h"
 
 #include <unordered_map>
 #include <memory>
@@ -8,56 +8,36 @@
 #include <map>
 #include <algorithm>
 #include <iterator>
+#include <optional>
 
 
-enum class TypeOfRoute {
-	ANNULAR_ROUTE,
-	PENDULUM_ROUTE
-};
-
-const std::map<TypeOfRoute, std::string> TYPE_SYMBOL = { {TypeOfRoute::ANNULAR_ROUTE, " > "}, 
-														 {TypeOfRoute::PENDULUM_ROUTE, " - "} };
-
-TypeOfRoute DeterminateRouteType(std::string_view stop_list) {
-	char symbol;
-	for (size_t i = 0; i < stop_list.size(); ++i) {
-		symbol = stop_list[i];
-		if (symbol == '>' || symbol == '-') {
-			break;
-		}
-	}
-	if (symbol == '>') {
-		return TypeOfRoute::ANNULAR_ROUTE;
-	} else if (symbol == '-') {
-		return TypeOfRoute::PENDULUM_ROUTE;
-	}
-}
 
 struct Bus {
 	std::string name;
 
-	TypeOfRoute type;
+	bool is_roundtrip;
 	std::vector<std::string> stops_list;
-	std::unique_ptr<AnnularRoute> route = nullptr;
+	std::optional<Route> route = std::nullopt;
 };
 
-Bus ReadBus(std::string_view in, const std::string& name) {
-	
-	TypeOfRoute type = DeterminateRouteType(in);
+Bus ReadBus(const std::map<std::string, Json::Node>& json_bus) {
+	Bus bus;
 
-	std::vector<std::string> result;
+	bus.name = json_bus.at("name").AsString();
 
-	while (!in.empty()) {
-		result.push_back(Split(in, TYPE_SYMBOL.at(type)));
+	bus.is_roundtrip = json_bus.at("is_roundtrip").AsBool();
+
+	for (const auto& stop_name_node : json_bus.at("stops").AsArray()) {
+		bus.stops_list.push_back(stop_name_node.AsString());
 	}
 
-	if (type == TypeOfRoute::PENDULUM_ROUTE) {
+	if (!bus.is_roundtrip) {
 		std::vector<std::string> temp;
-		std::reverse_copy(result.begin(), result.end() - 1, back_inserter(temp));
-		result.insert(result.end(), make_move_iterator(temp.begin()), make_move_iterator(temp.end()));
+		std::reverse_copy(bus.stops_list.begin(), bus.stops_list.end() - 1, back_inserter(temp));
+		bus.stops_list.insert(bus.stops_list.end(), make_move_iterator(temp.begin()), make_move_iterator(temp.end()));
 	}
-	
-	return { name, type, std::move(result) };
+
+	return bus;
 }
 
 class RouteManager {
@@ -71,7 +51,7 @@ public:
 	}
 
 	void InsertBus(Bus& bus) {
-		AnnularRoute::Stops stops;
+		Route::Stops stops;
 		stops.reserve(bus.stops_list.size());
 
 		for (const auto& stop_name : bus.stops_list) {
@@ -84,14 +64,8 @@ public:
 			stops.push_back(&stops_list_[stop_name]);
 		}
 
-		if (bus.type == TypeOfRoute::ANNULAR_ROUTE) {
-			bus.route = std::move(std::make_unique<AnnularRoute>(stops));
-			bus_list_[bus.name] = std::move(bus);
-		}
-		else if (bus.type == TypeOfRoute::PENDULUM_ROUTE) {
-			bus.route = std::move(std::make_unique<PendulumRoute>(stops));
-			bus_list_[bus.name] = std::move(bus);
-		}
+		bus.route = std::make_optional <Route>(stops);
+		bus_list_[bus.name] = std::move(bus);
 	}
 
 	void UpdateDb() {
@@ -100,44 +74,45 @@ public:
 		}
 	}
 
-	void Bus(std::ostream& out, const std::string& bus_name) const {
+	void Bus(Json::Document& out, int id, const std::string& bus_name) const {
 		auto it = bus_list_.find(bus_name);
+		std::map<std::string, Json::Node> node;
 		if (it == bus_list_.end()) {
-			out << "Bus " << bus_name << ": not found" << '\n';
+			node.emplace("request_id", Json::Node(static_cast<double> (id)));
+			node.emplace("error_message", Json::Node(std::string("not found")));
 		}
 		else {
-			out.precision(6);
 			const auto& bus = it->second;
-			out << "Bus " << bus.name << ": " << bus.route->CountOfStops() << " stops on route, "
-				<< bus.route->CountOfUniqueStops() << " unique stops, "
-				<< bus.route->GetLenght() << " route length, "
-			    << bus.route->GetCurvature() << " curvature\n";
+
+			node.emplace("stop_count", Json::Node(static_cast<double> (bus.route->CountOfStops())));
+			node.emplace("unique_stop_count", Json::Node(static_cast<double> (bus.route->CountOfUniqueStops())));
+			node.emplace("route_length", Json::Node(static_cast<double> (bus.route->GetLenght())));
+			node.emplace("curvature", Json::Node(bus.route->GetCurvature()));
+			node.emplace("request_id", Json::Node(static_cast<double> (id)));
 		}
+
+		out.AddNode(Json::Node(move(node)));
 	}
 
-	void ViewStopBuses(std::ostream& out, const std::string& stop_name) const {
+	void ViewStopBuses(Json::Document& out, int id, const std::string& stop_name) const {
 		auto stop = stops_list_.find(stop_name);
 		auto have_bus = stop_bus_.find(stop_name);
-		out << "Stop " << stop_name << ": ";
+		std::map<std::string, Json::Node> node;
+		std::vector<Json::Node> buses;
 		if (stop != stops_list_.end() && have_bus != stop_bus_.end()) {
-			bool first = true;
-			out << "buses ";
 			for (const auto& bus : stop_bus_.at(stop_name)) {
-				if (first) {
-					first = !first;
-				}
-				else {
-					out << " ";
-				}
-				out << bus;
+				buses.push_back(Json::Node(std::string(bus)));
 			}
+			node.emplace("buses", Json::Node(move(buses)));
 		}
 		else if (stop == stops_list_.end()) {
-			out << "not found";
+			node.emplace("error_message", Json::Node(std::string("not found")));
 		}
 		else {
-			out << "no buses";
+			node.emplace("buses", Json::Node(move(buses)));
 		}
-		out << "\n";
+		node.emplace("request_id", Json::Node(static_cast<double>(id)));
+
+		out.AddNode(Json::Node(move(node)));
 	}
 };

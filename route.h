@@ -1,4 +1,5 @@
 #pragma once
+#include "json.h"
 
 #include <string_view>
 #include <string>
@@ -9,6 +10,7 @@
 #include <iostream>
 #include <sstream>
 #include <cstdint>
+#include <map>
 
 
 struct Stop {
@@ -40,26 +42,23 @@ std::string Split(std::string_view& sv, const std::string& symbols) {
 	return result;
 }
 
-Stop ReadStop(std::string_view in, const std::string& stop_name) {
+Stop ReadStop(const std::map<std::string, Json::Node>& json_stop) {
 	Stop stop;
 
-	stop.name = stop_name;
-	stop.latitude = ConvertInNumber<double>(Split(in, ", "));
-	stop.longitude = ConvertInNumber<double>(Split(in, ", "));
+	stop.name = json_stop.at("name").AsString();
+	stop.latitude = json_stop.at("latitude").AsDouble();
+	stop.longitude = json_stop.at("longitude").AsDouble();
 
-	while (!in.empty()) {
-		
-		int distance = ConvertInNumber<int>(Split(in, "m to "));
-		
-		std::string name = Split(in, ", ");
+	const auto& road_distances = json_stop.at("road_distances").AsMap();
 
-		stop.other_stops_distance[name] = distance;
+	for (const auto&[stop_name, distance_node] : road_distances) {
+		stop.other_stops_distance[stop_name] = distance_node.AsDouble();
 	}
-	
+
 	return stop;
 }
 
-class AnnularRoute {
+class Route {
 public:
 	using Stops = std::vector<const Stop*>;
 protected:
@@ -90,20 +89,20 @@ protected:
 	static int ComputeRouteDistance(const Stop& first, const Stop& second) {
 		const auto& stops_distance_first = first.other_stops_distance;
 		const auto& stops_distance_second = second.other_stops_distance;
-		
-		return stops_distance_first.find(second.name) == stops_distance_first.end() 
-			? stops_distance_second.at(first.name) 
+
+		return stops_distance_first.find(second.name) == stops_distance_first.end()
+			? stops_distance_second.at(first.name)
 			: stops_distance_first.at(second.name);
 	}
 
 public:
-	AnnularRoute(Stops& stops) : stops_(std::move(stops)) {
+	Route(Stops& stops) : stops_(std::move(stops)) {
 		for (auto stop : stops_) {
 			unique_stops_.insert(stop->name);
 		}
 	}
 
-	void ComputeLenghtAndCurvature() {	
+	void ComputeLenghtAndCurvature() {
 		double route_geolenght = 0;
 
 		for (size_t i = 0; i < stops_.size() - 1; ++i) {
@@ -130,11 +129,4 @@ public:
 	double GetCurvature() const {
 		return curvature_;
 	}
-
-	virtual ~AnnularRoute() {}
-};
-
-class PendulumRoute : public AnnularRoute {
-public:
-	PendulumRoute(Stops& stops) : AnnularRoute(stops) {}
 };
